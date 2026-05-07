@@ -3,10 +3,11 @@
 -- All statements use IF NOT EXISTS so re-running is safe.
 --
 -- Tables added per phase:
---   Phase 2 (current): users, refresh_tokens
---   Phase 4:           pgs, pg_photos
---   Phase 5:           reviews
---   Phase 6:           review_upvotes, review_flags
+--   Phase 2: users, refresh_tokens
+--   Phase 4: pgs
+--   Phase 5: reviews
+--   Phase 6: review_upvotes, review_flags
+--   Phase 7: pg_photos
 
 
 -- =============================================================
@@ -38,3 +39,25 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
 -- Speeds up "delete all tokens for user X" (used by future log-out-all-sessions).
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id
     ON refresh_tokens(user_id);
+
+
+-- =============================================================
+-- Phase 4: PGs (accommodations)
+-- =============================================================
+
+CREATE TABLE IF NOT EXISTS pgs (
+    id          BIGSERIAL    PRIMARY KEY,
+    name        TEXT         NOT NULL,
+    address     TEXT         NOT NULL,
+    state       TEXT         NOT NULL,                              -- e.g., 'Karnataka'; free text, ILIKE-searched
+    city        TEXT         NOT NULL,                              -- stored as-typed; searched case-insensitively
+    area        TEXT         NOT NULL,                              -- stored as-typed
+    added_by    BIGINT       NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+-- Speeds up state/city/area filtering and the recent-feed sort.
+CREATE INDEX IF NOT EXISTS idx_pgs_state      ON pgs (state);
+CREATE INDEX IF NOT EXISTS idx_pgs_city       ON pgs (city);
+CREATE INDEX IF NOT EXISTS idx_pgs_area       ON pgs (area);
+CREATE INDEX IF NOT EXISTS idx_pgs_created_at ON pgs (created_at DESC);

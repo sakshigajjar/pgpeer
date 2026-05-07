@@ -4,6 +4,7 @@ const session = require('express-session');
 
 const passport = require('./config/passport');
 const authRoutes = require('./routes/auth.routes');
+const pgRoutes = require('./routes/pg.routes');
 
 const app = express();
 
@@ -35,6 +36,7 @@ app.get('/health', (req, res) => {
 });
 
 app.use('/api/auth', authRoutes);
+app.use('/api/pgs',  pgRoutes);
 
 // --- Centralised error handler (MUST be last; 4-argument signature) ---
 // Express recognises (err, req, res, next) as an error handler specifically.
