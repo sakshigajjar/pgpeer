@@ -27,7 +27,7 @@ function cookieOpts(maxAgeMs) {
   };
 }
 
-// Sets both auth cookies on the response. Used by register, login, and refresh.
+// Sets both auth cookies on the response. Used by register, login, refresh, googleCallback.
 function setAuthCookies(res, accessToken, refreshToken) {
   res.cookie('access_token',  accessToken,  cookieOpts(ACCESS_COOKIE_MAX_AGE));
   res.cookie('refresh_token', refreshToken, cookieOpts(REFRESH_COOKIE_MAX_AGE));
@@ -39,6 +39,21 @@ function clearAuthCookies(res) {
   const opts = { httpOnly: true, secure: COOKIE_SECURE, sameSite: 'lax' };
   res.clearCookie('access_token',  opts);
   res.clearCookie('refresh_token', opts);
+}
+
+// Issue access + refresh tokens for a given user, persist refresh hash, set cookies.
+// Used by login, refresh, and googleCallback — they all do the same thing post-auth.
+async function issueAuthCookies(res, userId) {
+  const accessToken = signAccessToken(userId);
+  const { rawToken, tokenHash, expiresAt } = generateRefreshToken();
+
+  await query(
+    `INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
+     VALUES ($1, $2, $3)`,
+    [userId, tokenHash, expiresAt]
+  );
+
+  setAuthCookies(res, accessToken, rawToken);
 }
 
 
@@ -56,7 +71,6 @@ async function register(req, res, next) {
     if (!password || typeof password !== 'string' || password.length < 8) {
       return res.status(400).json({ error: 'Password must be at least 8 characters' });
     }
-    // bcrypt silently truncates beyond 72 bytes — fail loudly instead.
     if (password.length > 72) {
       return res.status(400).json({ error: 'Password must be at most 72 characters' });
     }
@@ -87,28 +101,15 @@ async function register(req, res, next) {
       );
       user = insertResult.rows[0];
     } catch (err) {
-      // PG error code 23505 = unique_violation — handles the race condition above.
       if (err.code === '23505') {
         return res.status(409).json({ error: 'Email already registered' });
       }
       throw err;
     }
 
-    // 5. Issue access token (JWT) + refresh token (opaque random)
-    const accessToken = signAccessToken(user.id);
-    const { rawToken, tokenHash, expiresAt } = generateRefreshToken();
+    // 5. Issue tokens + set cookies
+    await issueAuthCookies(res, user.id);
 
-    // 6. Persist refresh token HASH in DB (raw token only ever lives in the cookie)
-    await query(
-      `INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
-       VALUES ($1, $2, $3)`,
-      [user.id, tokenHash, expiresAt]
-    );
-
-    // 7. Set both auth cookies
-    setAuthCookies(res, accessToken, rawToken);
-
-    // 8. Respond — tokens are in cookies, NOT in the body.
     return res.status(201).json({ user });
   } catch (err) {
     next(err);
@@ -120,7 +121,6 @@ async function login(req, res, next) {
   try {
     const { email, password } = req.body;
 
-    // 1. Validate (lighter than register — only the two fields we need)
     if (!email || typeof email !== 'string') {
       return res.status(400).json({ error: 'Email is required' });
     }
@@ -130,7 +130,6 @@ async function login(req, res, next) {
 
     const normalisedEmail = email.toLowerCase().trim();
 
-    // 2. Look up user
     const result = await query(
       `SELECT id, name, email, password_hash, created_at
        FROM users WHERE email = $1`,
@@ -138,9 +137,7 @@ async function login(req, res, next) {
     );
     const user = result.rows[0];
 
-    // 3. Compare password — ALWAYS run bcrypt.compare even if the user doesn't
-    // exist or has no password (Google-only). Otherwise response time leaks
-    // whether the email is registered. Generic error message for the same reason.
+    // ALWAYS run bcrypt.compare even if no user / no password — timing-safe.
     const hashToCompare = user?.password_hash || TIMING_SAFE_FAKE_HASH;
     const passwordOk = await bcrypt.compare(password, hashToCompare);
 
@@ -148,21 +145,8 @@ async function login(req, res, next) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
-    // 4. Issue access + refresh tokens (multi-session: do NOT delete existing tokens)
-    const accessToken = signAccessToken(user.id);
-    const { rawToken, tokenHash, expiresAt } = generateRefreshToken();
+    await issueAuthCookies(res, user.id);
 
-    await query(
-      `INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
-       VALUES ($1, $2, $3)`,
-      [user.id, tokenHash, expiresAt]
-    );
-
-    // 5. Set cookies
-    setAuthCookies(res, accessToken, rawToken);
-
-    // 6. Respond — same shape as /register so the frontend handles both uniformly.
-    //    Strip password_hash from the row before returning.
     const { password_hash, ...safeUser } = user;
     return res.status(200).json({ user: safeUser });
   } catch (err) {
@@ -173,16 +157,13 @@ async function login(req, res, next) {
 
 async function refresh(req, res, next) {
   try {
-    // 1. Read refresh token from cookie
     const rawToken = req.cookies.refresh_token;
     if (!rawToken) {
       return res.status(401).json({ error: 'No refresh token' });
     }
 
-    // 2. Hash it for DB lookup (we never store the raw token)
     const incomingHash = hashToken(rawToken);
 
-    // 3. Look up token + user in ONE query (JOIN avoids a second SELECT)
     const lookup = await query(
       `SELECT rt.id          AS token_id,
               rt.user_id     AS user_id,
@@ -198,24 +179,17 @@ async function refresh(req, res, next) {
     const row = lookup.rows[0];
 
     if (!row) {
-      // Token not in DB. Could be: never issued, already rotated, or forged.
       return res.status(401).json({ error: 'Invalid refresh token' });
     }
-
-    // 4. Check expiry
     if (new Date(row.expires_at) < new Date()) {
-      // Clean up the expired row opportunistically.
       await query('DELETE FROM refresh_tokens WHERE id = $1', [row.token_id]);
       return res.status(401).json({ error: 'Refresh token expired' });
     }
 
-    // 5. Generate new tokens BEFORE the transaction — pure CPU, no DB needed.
     const newAccess = signAccessToken(row.user_id);
     const newRefresh = generateRefreshToken();
 
-    // 6. Atomic rotation: delete old refresh row + insert new one in a transaction.
-    //    If we did DELETE then INSERT without a transaction and crashed in between,
-    //    the user would be silently logged out.
+    // Atomic rotation: delete old refresh row + insert new one.
     await transaction(async (client) => {
       await client.query(
         'DELETE FROM refresh_tokens WHERE id = $1',
@@ -228,10 +202,8 @@ async function refresh(req, res, next) {
       );
     });
 
-    // 7. Set new cookies (overwrite the old ones in the browser)
     setAuthCookies(res, newAccess, newRefresh.rawToken);
 
-    // 8. Respond with user (so frontend can rehydrate state without an extra call)
     return res.status(200).json({
       user: {
         id: row.user_id,
@@ -250,9 +222,6 @@ async function logout(req, res, next) {
   try {
     const rawToken = req.cookies.refresh_token;
 
-    // Best-effort delete of the refresh row from DB. Idempotent — if the
-    // cookie is missing or the row isn't there, we still clear cookies and
-    // return 204. Logout is the user's intent; we honour it regardless.
     if (rawToken) {
       const incomingHash = hashToken(rawToken);
       await query(
@@ -262,8 +231,6 @@ async function logout(req, res, next) {
     }
 
     clearAuthCookies(res);
-
-    // 204 No Content — success, no body needed.
     return res.status(204).end();
   } catch (err) {
     next(err);
@@ -271,4 +238,50 @@ async function logout(req, res, next) {
 }
 
 
-module.exports = { register, login, refresh, logout };
+// Called AFTER passport.authenticate('google') middleware has run successfully.
+// At this point req.user is the user row our verify callback returned.
+async function googleCallback(req, res, next) {
+  try {
+    if (!req.user) {
+      // Defensive — passport's failureRedirect should have caught this earlier.
+      return res.redirect(`${process.env.FRONTEND_URL}?error=google_auth_failed`);
+    }
+
+    await issueAuthCookies(res, req.user.id);
+
+    // 302 to the frontend. Cookies are now set on the browser.
+    return res.redirect(process.env.FRONTEND_URL);
+  } catch (err) {
+    next(err);
+  }
+}
+
+
+// GET /api/auth/me — protected. Returns the current user.
+// requireAuth middleware has already verified the access token and set req.user.id.
+async function me(req, res, next) {
+  try {
+    const result = await query(
+      'SELECT id, name, email, created_at FROM users WHERE id = $1',
+      [req.user.id]
+    );
+    const user = result.rows[0];
+    if (!user) {
+      // Token valid but the user row was deleted — rare edge case.
+      return res.status(404).json({ error: 'User not found' });
+    }
+    return res.json({ user });
+  } catch (err) {
+    next(err);
+  }
+}
+
+
+module.exports = {
+  register,
+  login,
+  refresh,
+  logout,
+  googleCallback,
+  me,
+};
