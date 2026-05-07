@@ -1,0 +1,6 @@
+-- PGPeer database schema
+-- Tables added per phase:
+--   Phase 2: users
+--   Phase 4: pgs, pg_photos
+--   Phase 5: reviews
+--   Phase 6: review_upvotes, review_flags
