@@ -16,6 +16,9 @@ router.post('/:id/photos', requireAuth, photoUploadMiddleware, uploadPhoto);
 // If '/:id' were declared first, GET /api/pgs/recent would match it with id="recent".
 router.get('/recent', pgController.recentPgs);
 
+// GET /api/pgs/:id/summary — AI-generated summary + tags (Phase 8, cached 24h)
+router.get('/:id/summary', pgController.getPgSummary);
+
 // GET /api/pgs/:id — single PG detail
 router.get('/:id', pgController.getPgById);
 

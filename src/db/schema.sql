@@ -46,14 +46,18 @@ CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id
 -- =============================================================
 
 CREATE TABLE IF NOT EXISTS pgs (
-    id          BIGSERIAL    PRIMARY KEY,
-    name        TEXT         NOT NULL,
-    address     TEXT         NOT NULL,
-    state       TEXT         NOT NULL,                              -- e.g., 'Karnataka'; free text, ILIKE-searched
-    city        TEXT         NOT NULL,                              -- stored as-typed; searched case-insensitively
-    area        TEXT         NOT NULL,                              -- stored as-typed
-    added_by    BIGINT       NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
-    created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+    id                    BIGSERIAL    PRIMARY KEY,
+    name                  TEXT         NOT NULL,
+    address               TEXT         NOT NULL,
+    state                 TEXT         NOT NULL,                              -- e.g., 'Karnataka'; free text, ILIKE-searched
+    city                  TEXT         NOT NULL,                              -- stored as-typed; searched case-insensitively
+    area                  TEXT         NOT NULL,                              -- stored as-typed
+    added_by              BIGINT       NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    created_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+
+    -- Phase 8: Gemini summary cache. NULL summary_generated_at means "regenerate next call".
+    ai_summary            JSONB,                                              -- { summary: "...", tags: [...] }
+    summary_generated_at  TIMESTAMPTZ
 );
 
 -- Speeds up state/city/area filtering and the recent-feed sort.

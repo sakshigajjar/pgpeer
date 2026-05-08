@@ -64,27 +64,36 @@ async function createReview(req, res, next) {
       return res.status(400).json({ error: 'currently_living must be a boolean (true or false)' });
     }
 
-    // --- Insert ---
+    // --- Insert + invalidate Gemini summary cache for this PG, atomically ---
     let review;
     try {
-      const result = await query(
-        `INSERT INTO reviews (
-           pg_id, user_id,
-           rating_food, rating_cleanliness, rating_owner, rating_value,
-           monthly_price, review_text, stay_duration, currently_living
-         )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-         RETURNING id, pg_id, user_id,
-                   rating_food, rating_cleanliness, rating_owner, rating_value,
-                   monthly_price, review_text, stay_duration, currently_living,
-                   upvotes, created_at`,
-        [
-          pg_id, req.user.id,
-          rating_food, rating_cleanliness, rating_owner, rating_value,
-          monthly_price, review_text.trim(), stay_duration, currently_living,
-        ]
-      );
-      review = result.rows[0];
+      review = await transaction(async (client) => {
+        const insertResult = await client.query(
+          `INSERT INTO reviews (
+             pg_id, user_id,
+             rating_food, rating_cleanliness, rating_owner, rating_value,
+             monthly_price, review_text, stay_duration, currently_living
+           )
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+           RETURNING id, pg_id, user_id,
+                     rating_food, rating_cleanliness, rating_owner, rating_value,
+                     monthly_price, review_text, stay_duration, currently_living,
+                     upvotes, created_at`,
+          [
+            pg_id, req.user.id,
+            rating_food, rating_cleanliness, rating_owner, rating_value,
+            monthly_price, review_text.trim(), stay_duration, currently_living,
+          ]
+        );
+
+        // Bust the Gemini summary cache for this PG — next /summary call regenerates.
+        await client.query(
+          `UPDATE pgs SET summary_generated_at = NULL WHERE id = $1`,
+          [pg_id]
+        );
+
+        return insertResult.rows[0];
+      });
     } catch (err) {
       if (err.code === '23503') {
         return res.status(404).json({ error: 'PG not found' });
