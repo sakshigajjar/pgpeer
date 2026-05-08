@@ -89,3 +89,34 @@ CREATE TABLE IF NOT EXISTS reviews (
 -- Speeds up "all reviews of this PG" lookups (used by GET /api/pgs/:id).
 CREATE INDEX IF NOT EXISTS idx_reviews_pg_id      ON reviews(pg_id);
 CREATE INDEX IF NOT EXISTS idx_reviews_created_at ON reviews(created_at DESC);
+
+
+-- =============================================================
+-- Phase 6: Trust features (upvotes + flags)
+-- =============================================================
+
+CREATE TABLE IF NOT EXISTS review_upvotes (
+    id          BIGSERIAL    PRIMARY KEY,
+    review_id   BIGINT       NOT NULL REFERENCES reviews(id) ON DELETE CASCADE,
+    user_id     BIGINT       NOT NULL REFERENCES users(id)   ON DELETE CASCADE,
+    created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+
+    -- One upvote per (user, review). Toggling off DELETEs the row.
+    CONSTRAINT one_upvote_per_user_per_review UNIQUE (review_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_review_upvotes_review_id ON review_upvotes(review_id);
+
+
+CREATE TABLE IF NOT EXISTS review_flags (
+    id          BIGSERIAL    PRIMARY KEY,
+    review_id   BIGINT       NOT NULL REFERENCES reviews(id) ON DELETE CASCADE,
+    flagged_by  BIGINT       NOT NULL REFERENCES users(id)   ON DELETE CASCADE,
+    reason      TEXT         NOT NULL CHECK (reason IN ('spam', 'fake', 'abuse', 'inappropriate', 'other')),
+    created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+
+    -- One flag per (user, review). User can't spam-flag the same review.
+    CONSTRAINT one_flag_per_user_per_review UNIQUE (review_id, flagged_by)
+);
+
+CREATE INDEX IF NOT EXISTS idx_review_flags_review_id ON review_flags(review_id);

@@ -1,8 +1,10 @@
-const { query } = require('../config/db');
+const { query, transaction } = require('../config/db');
 
 const MAX_MONTHLY_PRICE = 500_000;          // ₹5 lakh — sanity ceiling
 const MAX_STAY_DURATION_MONTHS = 240;       // 20 years — sanity ceiling
 const MIN_WORD_COUNT = 30;                  // Locked rule #2
+
+const FLAG_REASONS = ['spam', 'fake', 'abuse', 'inappropriate', 'other'];
 
 // Word counter — splits on any whitespace (spaces, newlines, tabs).
 // `\S+` matches sequences of non-whitespace characters; we count how many.
@@ -63,8 +65,6 @@ async function createReview(req, res, next) {
     }
 
     // --- Insert ---
-    // FK violation (23503) → 404 (PG doesn't exist).
-    // UNIQUE violation (23505) → 409 (locked rule #1: one review per user per PG).
     let review;
     try {
       const result = await query(
@@ -95,9 +95,7 @@ async function createReview(req, res, next) {
       throw err;
     }
 
-    // Embed the reviewer's public profile (id, name, account-creation date).
-    // Account age is the trust signal (locked rule #7) — the frontend uses it
-    // to render "Reviewer since 2024".
+    // Embed reviewer's public profile (locked rule #7: account age trust signal).
     const userResult = await query(
       'SELECT id, name, created_at FROM users WHERE id = $1',
       [req.user.id]
@@ -111,4 +109,113 @@ async function createReview(req, res, next) {
 }
 
 
-module.exports = { createReview };
+// POST /api/reviews/:id/upvote — toggle upvote on/off for the current user.
+//   First call:  inserts a row,    increments reviews.upvotes by 1, returns { upvoted: true }
+//   Second call: deletes that row, decrements reviews.upvotes by 1, returns { upvoted: false }
+async function toggleUpvote(req, res, next) {
+  try {
+    const reviewId = parseInt(req.params.id, 10);
+    if (!Number.isInteger(reviewId) || reviewId < 1) {
+      return res.status(400).json({ error: 'Invalid review id' });
+    }
+
+    // Single query: confirm the review exists AND check whether THIS user has
+    // upvoted it. LEFT JOIN means upvote_id is NULL when no upvote exists for
+    // this (review, user) pair, but we still get the review row.
+    const checkResult = await query(
+      `SELECT r.id          AS review_id,
+              ru.id         AS upvote_id
+       FROM reviews r
+       LEFT JOIN review_upvotes ru
+         ON ru.review_id = r.id AND ru.user_id = $2
+       WHERE r.id = $1`,
+      [reviewId, req.user.id]
+    );
+
+    if (checkResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Review not found' });
+    }
+
+    const wasUpvoted = checkResult.rows[0].upvote_id !== null;
+
+    // Counter and the upvote row stay in sync via a transaction.
+    // If either statement fails, both revert — no orphan rows or mismatched counts.
+    const newUpvotes = await transaction(async (client) => {
+      if (wasUpvoted) {
+        await client.query(
+          'DELETE FROM review_upvotes WHERE review_id = $1 AND user_id = $2',
+          [reviewId, req.user.id]
+        );
+        const r = await client.query(
+          'UPDATE reviews SET upvotes = upvotes - 1 WHERE id = $1 RETURNING upvotes',
+          [reviewId]
+        );
+        return r.rows[0].upvotes;
+      } else {
+        await client.query(
+          'INSERT INTO review_upvotes (review_id, user_id) VALUES ($1, $2)',
+          [reviewId, req.user.id]
+        );
+        const r = await client.query(
+          'UPDATE reviews SET upvotes = upvotes + 1 WHERE id = $1 RETURNING upvotes',
+          [reviewId]
+        );
+        return r.rows[0].upvotes;
+      }
+    });
+
+    return res.json({ upvoted: !wasUpvoted, upvotes: newUpvotes });
+  } catch (err) {
+    // 23505 here means a race: between our SELECT check and INSERT, another
+    // request also inserted (e.g., user double-clicked). Surface as 409.
+    if (err.code === '23505') {
+      return res.status(409).json({ error: 'Concurrent upvote — please retry' });
+    }
+    next(err);
+  }
+}
+
+
+// POST /api/reviews/:id/flag — report a review for moderation.
+// Body: { reason: 'spam' | 'fake' | 'abuse' | 'inappropriate' | 'other' }
+async function flagReview(req, res, next) {
+  try {
+    const reviewId = parseInt(req.params.id, 10);
+    if (!Number.isInteger(reviewId) || reviewId < 1) {
+      return res.status(400).json({ error: 'Invalid review id' });
+    }
+
+    const { reason } = req.body;
+    if (!FLAG_REASONS.includes(reason)) {
+      return res.status(400).json({
+        error: `reason must be one of: ${FLAG_REASONS.join(', ')}`,
+      });
+    }
+
+    let flag;
+    try {
+      const result = await query(
+        `INSERT INTO review_flags (review_id, flagged_by, reason)
+         VALUES ($1, $2, $3)
+         RETURNING id, review_id, flagged_by, reason, created_at`,
+        [reviewId, req.user.id, reason]
+      );
+      flag = result.rows[0];
+    } catch (err) {
+      if (err.code === '23503') {
+        return res.status(404).json({ error: 'Review not found' });
+      }
+      if (err.code === '23505') {
+        return res.status(409).json({ error: 'You have already flagged this review' });
+      }
+      throw err;
+    }
+
+    return res.status(201).json({ flag });
+  } catch (err) {
+    next(err);
+  }
+}
+
+
+module.exports = { createReview, toggleUpvote, flagReview };
