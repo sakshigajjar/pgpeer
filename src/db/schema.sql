@@ -120,3 +120,19 @@ CREATE TABLE IF NOT EXISTS review_flags (
 );
 
 CREATE INDEX IF NOT EXISTS idx_review_flags_review_id ON review_flags(review_id);
+
+
+-- =============================================================
+-- Phase 7: PG photos (Cloudinary)
+-- =============================================================
+
+CREATE TABLE IF NOT EXISTS pg_photos (
+    id                    BIGSERIAL    PRIMARY KEY,
+    pg_id                 BIGINT       NOT NULL REFERENCES pgs(id)   ON DELETE CASCADE,
+    photo_url             TEXT         NOT NULL,                      -- Cloudinary's secure_url
+    cloudinary_public_id  TEXT         NOT NULL,                      -- needed to delete from Cloudinary later
+    uploaded_by           BIGINT       NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    created_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_pg_photos_pg_id ON pg_photos(pg_id);

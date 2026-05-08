@@ -198,7 +198,19 @@ async function getPgById(req, res, next) {
       },
     }));
 
-    return res.json({ pg, reviews });
+    // Query 3: photos for this PG.
+    // Note: cloudinary_public_id is INTERNAL — not exposed to clients (only used
+    // server-side for future deletion).
+    const photosResult = await query(
+      `SELECT id, photo_url, uploaded_by, created_at
+       FROM pg_photos
+       WHERE pg_id = $1
+       ORDER BY created_at DESC`,
+      [id]
+    );
+    const photos = photosResult.rows;
+
+    return res.json({ pg, reviews, photos });
   } catch (err) {
     next(err);
   }
