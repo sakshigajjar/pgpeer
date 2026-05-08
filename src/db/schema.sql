@@ -61,3 +61,31 @@ CREATE INDEX IF NOT EXISTS idx_pgs_state      ON pgs (state);
 CREATE INDEX IF NOT EXISTS idx_pgs_city       ON pgs (city);
 CREATE INDEX IF NOT EXISTS idx_pgs_area       ON pgs (area);
 CREATE INDEX IF NOT EXISTS idx_pgs_created_at ON pgs (created_at DESC);
+
+
+-- =============================================================
+-- Phase 5: Reviews
+-- =============================================================
+
+CREATE TABLE IF NOT EXISTS reviews (
+    id                  BIGSERIAL    PRIMARY KEY,
+    pg_id               BIGINT       NOT NULL REFERENCES pgs(id)   ON DELETE CASCADE,
+    user_id             BIGINT       NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    rating_food         SMALLINT     NOT NULL CHECK (rating_food         BETWEEN 1 AND 5),
+    rating_cleanliness  SMALLINT     NOT NULL CHECK (rating_cleanliness  BETWEEN 1 AND 5),
+    rating_owner        SMALLINT     NOT NULL CHECK (rating_owner        BETWEEN 1 AND 5),
+    rating_value        SMALLINT     NOT NULL CHECK (rating_value        BETWEEN 1 AND 5),
+    monthly_price       INTEGER      NOT NULL CHECK (monthly_price > 0),
+    review_text         TEXT         NOT NULL,                              -- 30-word minimum enforced in app
+    stay_duration       INTEGER      NOT NULL CHECK (stay_duration > 0),    -- months
+    currently_living    BOOLEAN      NOT NULL,
+    upvotes             INTEGER      NOT NULL DEFAULT 0,                    -- populated in Phase 6
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+
+    -- Locked rule #1: one review per user per PG.
+    CONSTRAINT one_review_per_user_per_pg UNIQUE (pg_id, user_id)
+);
+
+-- Speeds up "all reviews of this PG" lookups (used by GET /api/pgs/:id).
+CREATE INDEX IF NOT EXISTS idx_reviews_pg_id      ON reviews(pg_id);
+CREATE INDEX IF NOT EXISTS idx_reviews_created_at ON reviews(created_at DESC);

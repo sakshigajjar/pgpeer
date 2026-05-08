@@ -122,7 +122,8 @@ async function recentPgs(req, res, next) {
 }
 
 
-// GET /api/pgs/:id — public; JOINs users for added_by trust signal
+// GET /api/pgs/:id — public; JOINs users for added_by trust signal,
+// plus a second query for embedded reviews with reviewer info.
 async function getPgById(req, res, next) {
   try {
     const id = parseInt(req.params.id, 10);
@@ -130,7 +131,8 @@ async function getPgById(req, res, next) {
       return res.status(400).json({ error: 'Invalid PG id' });
     }
 
-    const result = await query(
+    // Query 1: PG + contributor info
+    const pgResult = await query(
       `SELECT pg.id, pg.name, pg.address, pg.state, pg.city, pg.area, pg.created_at,
               u.id         AS added_by_id,
               u.name       AS added_by_name,
@@ -141,13 +143,11 @@ async function getPgById(req, res, next) {
       [id]
     );
 
-    if (result.rows.length === 0) {
+    if (pgResult.rows.length === 0) {
       return res.status(404).json({ error: 'PG not found' });
     }
 
-    // Reshape flat JOIN result into nested object — added_by is the contributor's
-    // public profile, exposed for trust (see business rule #7: account age signals).
-    const row = result.rows[0];
+    const row = pgResult.rows[0];
     const pg = {
       id:         row.id,
       name:       row.name,
@@ -163,7 +163,42 @@ async function getPgById(req, res, next) {
       },
     };
 
-    return res.json({ pg });
+    // Query 2: reviews for this PG + reviewer's public profile.
+    // Sort: most-upvoted first, then most-recent — best content surfaces.
+    const reviewsResult = await query(
+      `SELECT r.id, r.rating_food, r.rating_cleanliness, r.rating_owner, r.rating_value,
+              r.monthly_price, r.review_text, r.stay_duration, r.currently_living,
+              r.upvotes, r.created_at,
+              u.id         AS user_id,
+              u.name       AS user_name,
+              u.created_at AS user_created_at
+       FROM reviews r
+       JOIN users u ON u.id = r.user_id
+       WHERE r.pg_id = $1
+       ORDER BY r.upvotes DESC, r.created_at DESC`,
+      [id]
+    );
+
+    const reviews = reviewsResult.rows.map((r) => ({
+      id:                 r.id,
+      rating_food:        r.rating_food,
+      rating_cleanliness: r.rating_cleanliness,
+      rating_owner:       r.rating_owner,
+      rating_value:       r.rating_value,
+      monthly_price:      r.monthly_price,
+      review_text:        r.review_text,
+      stay_duration:      r.stay_duration,
+      currently_living:   r.currently_living,
+      upvotes:            r.upvotes,
+      created_at:         r.created_at,
+      user: {
+        id:         r.user_id,
+        name:       r.user_name,
+        created_at: r.user_created_at,    // Locked rule #7: account age trust signal
+      },
+    }));
+
+    return res.json({ pg, reviews });
   } catch (err) {
     next(err);
   }
