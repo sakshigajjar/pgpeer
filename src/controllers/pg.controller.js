@@ -305,4 +305,71 @@ async function getPgSummary(req, res, next) {
 }
 
 
-module.exports = { createPg, searchPgs, recentPgs, getPgById, getPgSummary };
+// GET /api/pgs/:id/trend — public; monthly aggregates of ratings, price, review count
+// for the last 12 months. Used by the frontend chart layer.
+//
+// One query does it all via date_trunc + AVG + COUNT + GROUP BY.
+// Skips months with no reviews (frontend decides whether to show gaps).
+async function getPgTrend(req, res, next) {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id) || id < 1) {
+      return res.status(400).json({ error: 'Invalid PG id' });
+    }
+
+    // Verify PG exists — distinguishes "no reviews ever" from "PG doesn't exist".
+    const pgCheck = await query('SELECT id FROM pgs WHERE id = $1', [id]);
+    if (pgCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'PG not found' });
+    }
+
+    // Two correctness details in this query:
+    //
+    // (1) Bucket months in IST, not UTC.
+    //     `created_at AT TIME ZONE 'Asia/Kolkata'` converts the TIMESTAMPTZ to a
+    //     plain timestamp expressed in IST. date_trunc then rounds to IST month
+    //     start. A review at 2am IST on the 1st correctly lands in that month.
+    //
+    // (2) Format month as text, not date.
+    //     pg-node converts SQL DATE → JS Date interpreting it as LOCAL midnight,
+    //     which then serializes via toISOString() as UTC — yielding "2026-04-30T18:30Z"
+    //     instead of "2026-05-01" on a server in IST. Using to_char() returns a
+    //     plain string the frontend can parse without timezone surprises.
+    //
+    // Number casts (::float8, ::int) make pg-node return JS numbers rather than
+    // numeric-as-string. ROUND keeps decimals tidy in the JSON output.
+    // CTE separates bucketing from aggregation: 'bucketed' attaches an IST
+    // month_start to each review row; the outer SELECT averages within each bucket.
+    const result = await query(
+      `WITH bucketed AS (
+         SELECT
+           date_trunc('month', created_at AT TIME ZONE 'Asia/Kolkata') AS month_start,
+           rating_food, rating_cleanliness, rating_owner, rating_value,
+           monthly_price
+         FROM reviews
+         WHERE pg_id = $1
+           AND created_at >= NOW() - INTERVAL '12 months'
+       )
+       SELECT
+         to_char(month_start, 'YYYY-MM-DD') AS month,
+         ROUND(AVG(rating_food)::numeric, 2)::float8        AS avg_rating_food,
+         ROUND(AVG(rating_cleanliness)::numeric, 2)::float8 AS avg_rating_cleanliness,
+         ROUND(AVG(rating_owner)::numeric, 2)::float8       AS avg_rating_owner,
+         ROUND(AVG(rating_value)::numeric, 2)::float8       AS avg_rating_value,
+         ROUND(AVG((rating_food + rating_cleanliness + rating_owner + rating_value) / 4.0)::numeric, 2)::float8 AS avg_overall,
+         AVG(monthly_price)::int                            AS avg_monthly_price,
+         COUNT(*)::int                                      AS review_count
+       FROM bucketed
+       GROUP BY month_start
+       ORDER BY month_start ASC`,
+      [id]
+    );
+
+    return res.json({ pg_id: id, trend: result.rows });
+  } catch (err) {
+    next(err);
+  }
+}
+
+
+module.exports = { createPg, searchPgs, recentPgs, getPgById, getPgSummary, getPgTrend };

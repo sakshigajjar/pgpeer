@@ -19,6 +19,9 @@ router.get('/recent', pgController.recentPgs);
 // GET /api/pgs/:id/summary — AI-generated summary + tags (Phase 8, cached 24h)
 router.get('/:id/summary', pgController.getPgSummary);
 
+// GET /api/pgs/:id/trend — monthly rating trend for the last 12 months (Phase 9)
+router.get('/:id/trend', pgController.getPgTrend);
+
 // GET /api/pgs/:id — single PG detail
 router.get('/:id', pgController.getPgById);
 
