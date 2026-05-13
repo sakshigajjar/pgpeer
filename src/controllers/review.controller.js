@@ -1,4 +1,5 @@
 const { query, transaction } = require('../config/db');
+const { regenerateSummary } = require('../utils/summary');
 
 const MAX_MONTHLY_PRICE = 500_000;          // ₹5 lakh — sanity ceiling
 const MAX_STAY_DURATION_MONTHS = 240;       // 20 years — sanity ceiling
@@ -110,6 +111,15 @@ async function createReview(req, res, next) {
       [req.user.id]
     );
     review.user = userResult.rows[0];
+
+    // FIRE-AND-FORGET background regen of the AI summary. We deliberately
+    // do NOT await this — the response goes out immediately. Gemini's 1-3s
+    // call runs while the user is navigating back to the PG detail page.
+    // If regen fails, the cache stays NULL and the next review submit
+    // triggers another attempt.
+    regenerateSummary(pg_id).catch((err) =>
+      console.error('Background summary regen failed:', err.message)
+    );
 
     return res.status(201).json({ review });
   } catch (err) {

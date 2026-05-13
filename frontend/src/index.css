@@ -1,0 +1,21 @@
+@import "tailwindcss";
+
+/*
+  Tailwind v4 dark mode is opt-in via a custom variant.
+  This activates `dark:` utilities whenever an ancestor has the `.dark` class
+  (we toggle it on <html> from the navbar button).
+*/
+@custom-variant dark (&:where(.dark, .dark *));
+
+
+/* Light mode defaults */
+body {
+  background-color: #fafaf9;   /* stone-50 — warm off-white */
+  color: #1c1917;              /* stone-900 */
+}
+
+/* Dark mode overrides */
+.dark body {
+  background-color: #0c0a09;   /* stone-950 — deep warm black */
+  color: #fafaf9;              /* stone-50 */
+}

@@ -1,10 +1,8 @@
 const { query } = require('../config/db');
-const { summaryModel, buildSummaryPrompt } = require('../config/gemini');
 
 const MAX_LIMIT = 50;
 const DEFAULT_SEARCH_LIMIT = 20;
 const DEFAULT_RECENT_LIMIT = 10;
-const SUMMARY_CACHE_TTL_MS = 24 * 60 * 60 * 1000;     // 24 hours
 
 // Validation rules from Phase 4 design discussion.
 const FIELD_MAX = {
@@ -219,14 +217,20 @@ async function getPgById(req, res, next) {
 }
 
 
-// GET /api/pgs/:id/summary — public; AI-generated summary + tags from Gemini.
+// GET /api/pgs/:id/summary — public; PURE READ from the cache.
 //
-// Caching strategy:
-//   1. If cache fresh (< 24h old) → return cache, no Gemini call
-//   2. Otherwise → fetch reviews, call Gemini, save result, return
-//   3. On Gemini error / parse failure → return stale cache if exists, else null
+// This endpoint never calls Gemini. The cache is written exclusively by
+// createReview's background task (review.controller.js fires regenerateSummary
+// without awaiting after each review insert).
 //
-// Invalidation happens in createReview (sets summary_generated_at = NULL).
+// If ai_summary is null (PG never had a review, or the last regen failed and
+// hasn't been retried yet), client gets { summary: null, tags: [] } and renders
+// "Summary not available right now. Read reviews below."
+//
+// Why pure-read: keeps reads fast (~10ms), prevents double-Gemini-call races
+// when multiple viewers hit the page concurrently, and isolates Gemini failures
+// from the read path entirely. The only way to refresh the cache is to submit
+// a review.
 async function getPgSummary(req, res, next) {
   try {
     const id = parseInt(req.params.id, 10);
@@ -234,9 +238,8 @@ async function getPgSummary(req, res, next) {
       return res.status(400).json({ error: 'Invalid PG id' });
     }
 
-    // 1. Fetch PG with cache fields
     const pgResult = await query(
-      `SELECT id, ai_summary, summary_generated_at FROM pgs WHERE id = $1`,
+      `SELECT id, ai_summary FROM pgs WHERE id = $1`,
       [id]
     );
     if (pgResult.rows.length === 0) {
@@ -244,61 +247,11 @@ async function getPgSummary(req, res, next) {
     }
     const pg = pgResult.rows[0];
 
-    // 2. Cache hit? (fresh = exists AND less than TTL old)
-    if (pg.ai_summary && pg.summary_generated_at) {
-      const ageMs = Date.now() - new Date(pg.summary_generated_at).getTime();
-      if (ageMs < SUMMARY_CACHE_TTL_MS) {
-        return res.json({ ...pg.ai_summary, cached: true });
-      }
+    if (pg.ai_summary) {
+      return res.json({ ...pg.ai_summary, cached: true });
     }
 
-    // 3. Fetch reviews to feed Gemini
-    const reviewsResult = await query(
-      `SELECT rating_food, rating_cleanliness, rating_owner, rating_value,
-              monthly_price, review_text, stay_duration, currently_living
-       FROM reviews
-       WHERE pg_id = $1
-       ORDER BY created_at DESC`,
-      [id]
-    );
-    const reviews = reviewsResult.rows;
-
-    // 4. No reviews → no summary possible
-    if (reviews.length === 0) {
-      return res.json({ summary: null, tags: [] });
-    }
-
-    // 5-9. Call Gemini, with stale fallback on any error
-    try {
-      const prompt = buildSummaryPrompt(reviews);
-      const result = await summaryModel.generateContent(prompt);
-      const raw = result.response.text();
-      const parsed = JSON.parse(raw);
-
-      // Sanity-check shape — defends against Gemini occasionally returning unexpected JSON.
-      if (typeof parsed.summary !== 'string' || !Array.isArray(parsed.tags)) {
-        throw new Error('Gemini response missing expected fields');
-      }
-
-      // Save to DB. JSONB column accepts a stringified JSON literal.
-      await query(
-        `UPDATE pgs
-         SET ai_summary = $1, summary_generated_at = NOW()
-         WHERE id = $2`,
-        [JSON.stringify(parsed), id]
-      );
-
-      return res.json({ ...parsed, cached: false });
-    } catch (err) {
-      // Log for debugging — does NOT crash the request.
-      console.error('Gemini error:', err.message);
-
-      // Stale cache fallback — better than nothing.
-      if (pg.ai_summary) {
-        return res.json({ ...pg.ai_summary, stale: true });
-      }
-      return res.json({ summary: null, tags: [] });
-    }
+    return res.json({ summary: null, tags: [] });
   } catch (err) {
     next(err);
   }
