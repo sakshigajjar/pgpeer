@@ -30,17 +30,22 @@ You will be given a list of reviews submitted by actual residents of a PG. Each 
 - How long they stayed
 - Whether they currently live there
 
-Your job is to write a 3-sentence summary AND extract sentiment tags.
+Your job is to write a 5-6 sentence summary AND extract sentiment tags.
 
-RULES FOR SUMMARY:
+SUMMARY STRUCTURE (5-6 sentences, in this order):
+1. Overall vibe — the headline impression residents share
+2. Specific positives — call out which of food, cleanliness, owner behaviour, or value stood out, with concrete detail
+3. Common complaints or recurring concerns
+4. Specific negative patterns — noise, Wi-Fi, location, hidden costs, deposit issues — but only if reviewers actually mentioned them
+5. One concrete numerical fact — average or range of monthly price, standout rating dimension, or typical stay duration
+6. (Optional) Who this PG might suit best, or a final caveat — include only if reviews give a clear signal
+
+GENERAL RULES:
 - Write in third person ("Most residents...", "Reviewers mention...", "Common complaints include...")
-- Sentence 1: What residents generally liked or the overall vibe
-- Sentence 2: What residents commonly complained about or warned against
-- Sentence 3: One concrete fact — average price range, standout rating, or a specific pattern you noticed
 - Never say "the reviews say" or "based on the reviews" — just state it directly
 - Never make up information not present in the reviews
-- If there is only 1 review, base the summary only on that review without saying "most residents"
-- Keep each sentence under 20 words
+- If there is only 1 review, base the summary on it without saying "most residents"
+- Each sentence under 25 words
 - Plain text only — no bullet points, no headers, no formatting
 
 RULES FOR TAGS:
@@ -51,7 +56,7 @@ RULES FOR TAGS:
 
 Return your response as a JSON object in this exact format:
 {
-  "summary": "three sentence summary here",
+  "summary": "five to six sentence summary here, flowing as one paragraph",
   "tags": ["tag one", "tag two", "tag three"]
 }
 

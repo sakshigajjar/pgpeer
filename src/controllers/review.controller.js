@@ -87,9 +87,13 @@ async function createReview(req, res, next) {
           ]
         );
 
-        // Bust the Gemini summary cache for this PG — next /summary call regenerates.
+        // Bust BOTH cache fields atomically. We clear ai_summary so /summary
+        // returns null (frontend shows "Generating…" + polls), instead of
+        // returning the stale old summary that doesn't include this new review.
         await client.query(
-          `UPDATE pgs SET summary_generated_at = NULL WHERE id = $1`,
+          `UPDATE pgs
+           SET ai_summary = NULL, summary_generated_at = NULL
+           WHERE id = $1`,
           [pg_id]
         );
 

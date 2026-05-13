@@ -76,6 +76,36 @@ function PgDetailPage() {
       .finally(() => setSummaryLoading(false))
   }, [id])
 
+  // Poll /summary every 3s while we have no summary but DO have reviews.
+  // This auto-picks-up the result of the fire-and-forget regen kicked off by
+  // a recent review submit — no manual refresh required.
+  useEffect(() => {
+    if (loading || summaryLoading) return
+    if (summary) return
+    if (reviews.length === 0) return
+
+    let attempts = 0
+    const MAX_ATTEMPTS = 10                       // 10 × 3s ≈ 30 seconds
+
+    const intervalId = setInterval(async () => {
+      attempts += 1
+      if (attempts > MAX_ATTEMPTS) {
+        clearInterval(intervalId)
+        return
+      }
+      try {
+        const data = await apiGet(`/api/pgs/${id}/summary`)
+        if (data.summary) {
+          setSummary(data.summary)
+          setTags(data.tags || [])
+          clearInterval(intervalId)
+        }
+      } catch { /* swallow — keep polling */ }
+    }, 3000)
+
+    return () => clearInterval(intervalId)
+  }, [id, loading, summaryLoading, summary, reviews.length])
+
   useEffect(() => {
     apiGet(`/api/pgs/${id}/trend`)
       .then((data) => setTrend(data.trend))
@@ -177,29 +207,39 @@ function PgDetailPage() {
       </section>
 
       {/* ===== AI Summary ===== */}
-      <section className="bg-rose-50 dark:bg-rose-950/30 border border-rose-100 dark:border-rose-900/50 rounded-2xl p-6">
-        <h2 className="text-xs font-semibold uppercase tracking-wider text-rose-700 dark:text-rose-300 mb-3">
-          AI Summary
+      <section className="bg-rose-50 dark:bg-rose-950/30 border border-rose-100 dark:border-rose-900/50 rounded-2xl p-8">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-rose-700 dark:text-rose-300 mb-4 flex items-center gap-2">
+          <span>AI Summary</span>
+          {/* Tiny "regenerating" indicator while polling */}
+          {!summaryLoading && !summary && reviews.length > 0 && (
+            <span className="inline-block w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+          )}
         </h2>
 
         {summaryLoading ? (
-          <p className="text-stone-600 dark:text-stone-400">Generating summary…</p>
+          <p className="text-base text-stone-600 dark:text-stone-400">Generating summary…</p>
         ) : summary ? (
           <>
-            <p className="text-stone-800 dark:text-stone-100 leading-relaxed text-base">{summary}</p>
+            <p className="text-base text-stone-800 dark:text-stone-100 leading-relaxed">
+              {summary}
+            </p>
             {tags.length > 0 && (
-              <div className="flex gap-2 flex-wrap mt-4">
+              <div className="flex gap-2 flex-wrap mt-6">
                 {tags.map((tag, i) => (
-                  <span key={i} className="bg-white dark:bg-stone-900 text-rose-700 dark:text-rose-300 px-3 py-1 rounded-full text-xs font-medium border border-rose-200 dark:border-rose-900">
+                  <span key={i} className="bg-white dark:bg-stone-900 text-rose-700 dark:text-rose-300 px-4 py-1.5 rounded-full text-sm font-medium border border-rose-200 dark:border-rose-900">
                     {tag}
                   </span>
                 ))}
               </div>
             )}
           </>
+        ) : reviews.length === 0 ? (
+          <p className="text-base text-stone-600 dark:text-stone-400">
+            No reviews yet. Submit one and Gemini will summarise.
+          </p>
         ) : (
-          <p className="text-stone-600 dark:text-stone-400">
-            Summary not available right now. Read reviews below.
+          <p className="text-base text-stone-600 dark:text-stone-400">
+            Generating summary based on the latest reviews…
           </p>
         )}
       </section>
