@@ -6,7 +6,7 @@
 --   Phase 2: users, refresh_tokens
 --   Phase 4: pgs
 --   Phase 5: reviews
---   Phase 6: review_upvotes, review_flags
+--   Phase 6: review_upvotes, review_flags, pg_flags
 --   Phase 7: pg_photos
 
 
@@ -49,9 +49,10 @@ CREATE TABLE IF NOT EXISTS pgs (
     id                    BIGSERIAL    PRIMARY KEY,
     name                  TEXT         NOT NULL,
     address               TEXT         NOT NULL,
-    state                 TEXT         NOT NULL,                              -- e.g., 'Karnataka'; free text, ILIKE-searched
-    city                  TEXT         NOT NULL,                              -- stored as-typed; searched case-insensitively
-    area                  TEXT         NOT NULL,                              -- stored as-typed
+    state                 TEXT         NOT NULL,                              -- canonical value from STATES list (app-validated)
+    city                  TEXT         NOT NULL,                              -- canonical value from CITIES list (app-validated)
+    area                  TEXT         NOT NULL,                              -- user-typed; frontend suggests existing via combobox
+    google_maps_url       TEXT         NOT NULL,                              -- required trust signal; app-validated URL format
     added_by              BIGINT       NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
     created_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
 
@@ -124,6 +125,20 @@ CREATE TABLE IF NOT EXISTS review_flags (
 );
 
 CREATE INDEX IF NOT EXISTS idx_review_flags_review_id ON review_flags(review_id);
+
+
+CREATE TABLE IF NOT EXISTS pg_flags (
+    id           BIGSERIAL    PRIMARY KEY,
+    pg_id        BIGINT       NOT NULL REFERENCES pgs(id)   ON DELETE CASCADE,
+    flagged_by   BIGINT       NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    reason       TEXT         NOT NULL CHECK (reason IN ('spam', 'fake', 'duplicate', 'inappropriate', 'other')),
+    created_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+
+    -- One flag per (user, pg). Prevents flag brigading from a single account.
+    CONSTRAINT one_flag_per_user_per_pg UNIQUE (pg_id, flagged_by)
+);
+
+CREATE INDEX IF NOT EXISTS idx_pg_flags_pg_id ON pg_flags(pg_id);
 
 
 -- =============================================================

@@ -12,7 +12,7 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 // responseMimeType: 'application/json' → strict JSON output (no markdown fences).
 // temperature: 0.3 → low randomness; same reviews give a similar summary each call.
 const summaryModel = genAI.getGenerativeModel({
-  model: 'gemini-2.5-flash-lite',
+  model: 'gemini-3.1-flash-lite',
   generationConfig: {
     responseMimeType: 'application/json',
     temperature: 0.3,

@@ -12,9 +12,15 @@ router.post('/', requireAuth, pgController.createPg);
 // POST /api/pgs/:id/photos — upload a photo for this PG (auth required, multipart/form-data)
 router.post('/:id/photos', requireAuth, photoUploadMiddleware, uploadPhoto);
 
+// POST /api/pgs/:id/flag — flag a PG listing for community moderation (auth required)
+router.post('/:id/flag', requireAuth, pgController.flagPg);
+
 // IMPORTANT: specific paths must come BEFORE parameterised paths.
 // If '/:id' were declared first, GET /api/pgs/recent would match it with id="recent".
 router.get('/recent', pgController.recentPgs);
+
+// GET /api/pgs/areas?city=X — distinct existing areas in that city (combobox suggestions)
+router.get('/areas', pgController.getPgAreas);
 
 // GET /api/pgs/:id/summary — AI-generated summary + tags (Phase 8, cached 24h)
 router.get('/:id/summary', pgController.getPgSummary);
