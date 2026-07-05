@@ -1,7 +1,21 @@
+import { useState } from 'react'
 import StarRating from './StarRating'
+import FlagForm from './FlagForm'
 
-function ReviewCard({ review, onUpvote, isLoggedIn, upvotedNow }) {
+
+// Same reasons the backend accepts for review flags (see review.controller.js).
+// Kept locally rather than fetched from an endpoint — small stable list.
+const REVIEW_FLAG_REASONS = ['spam', 'fake', 'abuse', 'inappropriate', 'other']
+
+
+function ReviewCard({ review, onUpvote, onFlag, isLoggedIn, upvotedNow, flaggedNow }) {
   const accountAge = formatAccountAge(review.user.created_at)
+  const [flagOpen, setFlagOpen] = useState(false)
+
+  async function handleFlagSubmit(reason) {
+    await onFlag(review.id, reason)     // parent handles API + optimistic update
+    setFlagOpen(false)
+  }
 
   return (
     <article className="bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 rounded-xl p-5 shadow-sm">
@@ -32,26 +46,61 @@ function ReviewCard({ review, onUpvote, isLoggedIn, upvotedNow }) {
 
       <p className="text-stone-800 dark:text-stone-200 mb-4 leading-relaxed">{review.review_text}</p>
 
-      {/* Footer — reviewer + upvote button */}
-      <div className="flex items-center justify-between pt-3 border-t border-stone-100 dark:border-stone-800">
-        <p className="text-xs text-stone-500 dark:text-stone-400">
-          <span className="font-medium text-stone-700 dark:text-stone-300">{review.user.name}</span>
-          <span className="mx-1.5 text-stone-300 dark:text-stone-700">·</span>
-          {accountAge}
-        </p>
+      {/* Footer — reviewer info + upvote + flag */}
+      <div className="pt-3 border-t border-stone-100 dark:border-stone-800">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-xs text-stone-500 dark:text-stone-400">
+            <span className="font-medium text-stone-700 dark:text-stone-300">{review.user.name}</span>
+            <span className="mx-1.5 text-stone-300 dark:text-stone-700">·</span>
+            {accountAge}
+            {review.flag_count > 0 && (
+              <>
+                <span className="mx-1.5 text-stone-300 dark:text-stone-700">·</span>
+                <span className="text-amber-700 dark:text-amber-400" title="Community flag count">
+                  ⚠ {review.flag_count} {review.flag_count === 1 ? 'flag' : 'flags'}
+                </span>
+              </>
+            )}
+          </p>
 
-        <button
-          onClick={() => onUpvote(review.id)}
-          disabled={!isLoggedIn}
-          title={isLoggedIn ? 'Mark as helpful' : 'Login to upvote'}
-          className={`px-3 py-1 text-sm rounded-md border transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-            upvotedNow
-              ? 'bg-rose-600 text-white border-rose-600 hover:bg-rose-700'
-              : 'bg-white dark:bg-stone-800 text-stone-700 dark:text-stone-200 border-stone-300 dark:border-stone-600 hover:bg-stone-50 dark:hover:bg-stone-700'
-          }`}
-        >
-          ▲ {upvotedNow ? 'Upvoted' : 'Helpful'} ({review.upvotes})
-        </button>
+          <div className="flex items-center gap-3">
+            {isLoggedIn && (
+              flaggedNow ? (
+                <span className="text-xs text-stone-500 dark:text-stone-400">You flagged this</span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setFlagOpen((v) => !v)}
+                  className="text-xs text-stone-500 hover:text-rose-600 dark:text-stone-400 dark:hover:text-rose-400 underline"
+                  title="Report this review"
+                >
+                  {flagOpen ? 'Cancel flag' : 'Flag'}
+                </button>
+              )
+            )}
+
+            <button
+              onClick={() => onUpvote(review.id)}
+              disabled={!isLoggedIn}
+              title={isLoggedIn ? 'Mark as helpful' : 'Login to upvote'}
+              className={`px-3 py-1 text-sm rounded-md border transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                upvotedNow
+                  ? 'bg-rose-600 text-white border-rose-600 hover:bg-rose-700'
+                  : 'bg-white dark:bg-stone-800 text-stone-700 dark:text-stone-200 border-stone-300 dark:border-stone-600 hover:bg-stone-50 dark:hover:bg-stone-700'
+              }`}
+            >
+              ▲ {upvotedNow ? 'Upvoted' : 'Helpful'} ({review.upvotes})
+            </button>
+          </div>
+        </div>
+
+        {flagOpen && !flaggedNow && (
+          <FlagForm
+            reasons={REVIEW_FLAG_REASONS}
+            onSubmit={handleFlagSubmit}
+            onCancel={() => setFlagOpen(false)}
+          />
+        )}
       </div>
     </article>
   )

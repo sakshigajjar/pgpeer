@@ -4,6 +4,12 @@ import { apiGet, apiPost, apiPostForm } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import ReviewCard from '../components/ReviewCard'
 import TrendChart from '../components/TrendChart'
+import FlagForm from '../components/FlagForm'
+
+
+// Same reasons the backend accepts for pg_flags (see pg.controller.js).
+// Different from review reasons: has 'duplicate', doesn't have 'abuse'.
+const PG_FLAG_REASONS = ['spam', 'fake', 'duplicate', 'inappropriate', 'other']
 
 
 function PencilIcon({ size = 18 }) {
@@ -45,6 +51,10 @@ function PgDetailPage() {
   const [trend, setTrend] = useState([])
 
   const [upvotedNow, setUpvotedNow] = useState(new Set())
+
+  const [pgFlagOpen, setPgFlagOpen]         = useState(false)
+  const [pgFlagged, setPgFlagged]           = useState(false)
+  const [flaggedReviews, setFlaggedReviews] = useState(new Set())
 
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
   const [uploadError, setUploadError]       = useState(null)
@@ -127,6 +137,42 @@ function PgDetailPage() {
     }
   }
 
+  // Both flag handlers do the API call + optimistic count bump + local "already
+  // flagged" tracking. On 409 (backend enforces one_flag_per_user_per_pg /
+  // _per_review), swallow silently and mark local state so the button hides —
+  // user probably flagged in another tab or from a previous session.
+  async function handleFlagPg(reason) {
+    try {
+      await apiPost(`/api/pgs/${id}/flag`, { reason })
+      setPg((p) => ({ ...p, flag_count: (p.flag_count || 0) + 1 }))
+      setPgFlagged(true)
+      setPgFlagOpen(false)
+    } catch (err) {
+      if (err.status === 409) {
+        setPgFlagged(true)
+        setPgFlagOpen(false)
+        return
+      }
+      throw err     // let FlagForm show the message
+    }
+  }
+
+  async function handleFlagReview(reviewId, reason) {
+    try {
+      await apiPost(`/api/reviews/${reviewId}/flag`, { reason })
+      setReviews((rs) =>
+        rs.map((r) => (r.id === reviewId ? { ...r, flag_count: (r.flag_count || 0) + 1 } : r))
+      )
+      setFlaggedReviews((s) => new Set(s).add(reviewId))
+    } catch (err) {
+      if (err.status === 409) {
+        setFlaggedReviews((s) => new Set(s).add(reviewId))
+        return
+      }
+      throw err
+    }
+  }
+
   async function handlePhotoSelected(e) {
     const file = e.target.files[0]
     if (!file) return
@@ -160,10 +206,53 @@ function PgDetailPage() {
           <span className="mt-1"><LocationIcon size={18} /></span>
           <span>{pg.address}, {pg.area}, {pg.city}, {pg.state}</span>
         </p>
-        <p className="text-sm text-rose-100/85">
-          Listed by <span className="font-medium text-white">{pg.added_by.name}</span> · joined {new Date(pg.added_by.created_at).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })}
-        </p>
+
+        {pg.google_maps_url && (
+          <a
+            href={pg.google_maps_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-block text-sm text-rose-50 hover:text-white underline decoration-rose-100/50 hover:decoration-white mb-4"
+          >
+            View on Google Maps →
+          </a>
+        )}
+
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-rose-100/85">
+          <span>
+            Listed by <span className="font-medium text-white">{pg.added_by.name}</span> · joined {new Date(pg.added_by.created_at).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })}
+          </span>
+          {pg.flag_count > 0 && (
+            <span className="text-amber-100" title="Community flag count">
+              · ⚠ {pg.flag_count} {pg.flag_count === 1 ? 'flag' : 'flags'}
+            </span>
+          )}
+          {user && (
+            <>
+              <span className="text-rose-200/50">·</span>
+              {pgFlagged ? (
+                <span className="text-xs text-rose-100/70">You flagged this listing</span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setPgFlagOpen((v) => !v)}
+                  className="text-xs text-rose-100/90 hover:text-white underline"
+                >
+                  {pgFlagOpen ? 'Cancel flag' : 'Flag this listing'}
+                </button>
+              )}
+            </>
+          )}
+        </div>
       </header>
+
+      {pgFlagOpen && !pgFlagged && (
+        <FlagForm
+          reasons={PG_FLAG_REASONS}
+          onSubmit={handleFlagPg}
+          onCancel={() => setPgFlagOpen(false)}
+        />
+      )}
 
       {/* ===== Photos ===== */}
       <section>
@@ -285,8 +374,10 @@ function PgDetailPage() {
                 key={review.id}
                 review={review}
                 onUpvote={handleUpvote}
+                onFlag={handleFlagReview}
                 isLoggedIn={Boolean(user)}
                 upvotedNow={upvotedNow.has(review.id)}
+                flaggedNow={flaggedReviews.has(review.id)}
               />
             ))}
           </div>

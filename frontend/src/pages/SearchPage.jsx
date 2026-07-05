@@ -1,23 +1,36 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo, useId } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { apiGet } from '../api/client'
 import PgCard from '../components/PgCard'
+import { STATES, CITIES, citiesForState } from '../config/locations'
 
 const PAGE_LIMIT = 20
 
 const inputClass =
-  'flex-1 min-w-0 sm:min-w-[160px] rounded-md border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-500 focus:border-rose-500'
+  'flex-1 min-w-0 sm:min-w-[160px] rounded-md border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-500 focus:border-rose-500 disabled:opacity-60 disabled:cursor-not-allowed'
+
 
 function SearchPage() {
   const [searchParams, setSearchParams] = useSearchParams()
 
-  const [stateInput, setStateInput] = useState(searchParams.get('state') || '')
-  const [cityInput,  setCityInput]  = useState(searchParams.get('city')  || '')
-  const [areaInput,  setAreaInput]  = useState(searchParams.get('area')  || '')
+  // Derive initial state from the URL. Handles the /search?city=Bangalore case
+  // (homepage hero passes just city) by looking up the city's canonical state
+  // so the dropdown UI populates correctly.
+  const initialState =
+    searchParams.get('state') ||
+    CITIES.find((c) => c.name === (searchParams.get('city') || ''))?.state ||
+    ''
+
+  const [stateInput, setStateInput] = useState(initialState)
+  const [cityInput, setCityInput]   = useState(searchParams.get('city') || '')
+  const [areaInput, setAreaInput]   = useState(searchParams.get('area') || '')
+
+  const [areaSuggestions, setAreaSuggestions] = useState([])
+  const areaListId = useId()
 
   const queryState = searchParams.get('state') || ''
-  const queryCity  = searchParams.get('city')  || ''
-  const queryArea  = searchParams.get('area')  || ''
+  const queryCity  = searchParams.get('city') || ''
+  const queryArea  = searchParams.get('area') || ''
   const queryPage  = parseInt(searchParams.get('page'), 10) || 1
 
   const hasFilters = Boolean(queryState || queryCity || queryArea)
@@ -26,6 +39,26 @@ function SearchPage() {
   const [total, setTotal]     = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError]     = useState(null)
+
+  // City dropdown: filter by state if picked, else show all cities. Search
+  // page favours flexibility — users can look up 'Bangalore' without knowing
+  // 'Karnataka'.
+  const cityOptions = useMemo(
+    () => (stateInput ? citiesForState(stateInput) : CITIES),
+    [stateInput]
+  )
+
+  // Fetch area suggestions from existing PG data whenever the city changes.
+  // Powers the <datalist> below the area input.
+  useEffect(() => {
+    if (!cityInput) {
+      setAreaSuggestions([])
+      return
+    }
+    apiGet(`/api/pgs/areas?city=${encodeURIComponent(cityInput)}`)
+      .then((data) => setAreaSuggestions(data.areas))
+      .catch(() => setAreaSuggestions([]))
+  }, [cityInput])
 
   useEffect(() => {
     if (!hasFilters) {
@@ -52,12 +85,24 @@ function SearchPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queryState, queryCity, queryArea, queryPage])
 
+  // State change: keep the current city if it belongs to the new state,
+  // otherwise clear (so we never leak a stale state,city pair). "Any state"
+  // (empty) preserves the current city.
+  function handleStateChange(e) {
+    const newState = e.target.value
+    setStateInput(newState)
+    if (newState && cityInput) {
+      const cityMatches = CITIES.some((c) => c.name === cityInput && c.state === newState)
+      if (!cityMatches) setCityInput('')
+    }
+  }
+
   function handleSubmit(e) {
     e.preventDefault()
     const params = new URLSearchParams()
-    if (stateInput.trim()) params.set('state', stateInput.trim())
-    if (cityInput.trim())  params.set('city',  cityInput.trim())
-    if (areaInput.trim())  params.set('area',  areaInput.trim())
+    if (stateInput)       params.set('state', stateInput)
+    if (cityInput)        params.set('city',  cityInput)
+    if (areaInput.trim()) params.set('area',  areaInput.trim())
     setSearchParams(params)
   }
 
@@ -76,24 +121,41 @@ function SearchPage() {
       </h1>
 
       <form onSubmit={handleSubmit} className="flex flex-wrap gap-2 mb-8">
-        <input
-          placeholder="State (e.g., Karnataka)"
+        <select
           value={stateInput}
-          onChange={(e) => setStateInput(e.target.value)}
+          onChange={handleStateChange}
           className={inputClass}
-        />
-        <input
-          placeholder="City (e.g., Bangalore)"
+        >
+          <option value="">Any state</option>
+          {STATES.map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </select>
+
+        <select
           value={cityInput}
           onChange={(e) => setCityInput(e.target.value)}
           className={inputClass}
-        />
+        >
+          <option value="">Any city</option>
+          {cityOptions.map((c) => (
+            <option key={c.name} value={c.name}>{c.name}</option>
+          ))}
+        </select>
+
         <input
-          placeholder="Area (e.g., Indiranagar)"
+          placeholder={cityInput ? 'Area (optional)' : 'Area (pick city for suggestions)'}
           value={areaInput}
           onChange={(e) => setAreaInput(e.target.value)}
+          list={areaListId}
           className={inputClass}
         />
+        <datalist id={areaListId}>
+          {areaSuggestions.map((a) => (
+            <option key={a} value={a} />
+          ))}
+        </datalist>
+
         <button
           type="submit"
           className="px-5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-md text-sm font-medium"
