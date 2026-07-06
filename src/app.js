@@ -1,6 +1,7 @@
 const express = require('express');
 const cookieParser = require('cookie-parser');
 const session = require('express-session');
+const pgSession = require('connect-pg-simple')(session);
 
 const passport = require('./config/passport');
 const authRoutes = require('./routes/auth.routes');
@@ -18,14 +19,19 @@ app.use(cookieParser());        // parses Cookie header into req.cookies
 // Memory store is fine on free-tier Render (single instance) and the data is
 // ephemeral (cookie expires in 10 min).
 app.use(session({
+  store: new pgSession({
+    conString: process.env.DATABASE_URL,
+    tableName: 'session',
+    createTableIfMissing: true,      // auto-creates the session table on first run
+  }),
   secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
   cookie: {
     httpOnly: true,
     secure: process.env.COOKIE_SECURE === 'true',
-    sameSite: 'lax',                 // must allow cross-site nav from Google
-    maxAge: 10 * 60 * 1000,          // 10 minutes — long enough for the OAuth dance
+    sameSite: 'lax',
+    maxAge: 10 * 60 * 1000,
   },
 }));
 
