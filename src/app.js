@@ -9,7 +9,7 @@ const pgRoutes = require('./routes/pg.routes');
 const reviewRoutes = require('./routes/review.routes');
 
 const app = express();
-
+app.set('trust proxy', 1);
 // --- Global middleware (order matters: parsers → session → passport → routes → errors) ---
 app.use(express.json());        // parses JSON bodies into req.body
 app.use(cookieParser());        // parses Cookie header into req.cookies
@@ -26,7 +26,7 @@ app.use(session({
   }),
   secret: process.env.SESSION_SECRET,
   resave: false,
-  saveUninitialized: false,
+  saveUninitialized: true,
   cookie: {
     httpOnly: true,
     secure: process.env.COOKIE_SECURE === 'true',
