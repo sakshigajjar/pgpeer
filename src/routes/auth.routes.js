@@ -38,14 +38,17 @@ router.get(
 // Passport middleware exchanges the code, fetches profile, runs our verify callback.
 // On success: req.user is set → googleCallback issues OUR tokens + redirects to frontend.
 // On failure: redirect to FRONTEND_URL with an error query param.
-router.get(
-  '/google/callback',
-  passport.authenticate('google', {
-    session: false,
-    failureRedirect: `${process.env.FRONTEND_URL}?error=google_auth_failed`,
-  }),
-  authController.googleCallback
-);
+router.get('/google/callback', (req, res, next) => {
+  passport.authenticate('google', { session: false }, (err, user, info) => {
+    console.error('OAUTH_DEBUG:', { err: err?.message, user, info });
+    if (err || !user) {
+      return res.redirect(`${process.env.FRONTEND_URL}?error=google_auth_failed`);
+    }
+    req.user = user;
+    return authController.googleCallback(req, res, next);
+  })(req, res, next);
+});
+
 
 
 // --- Current user (protected) ---
