@@ -1,0 +1,27 @@
+# Render static site routing rules.
+# Vite copies this file from public/ to dist/ at build time; Render picks it
+# up from the publish directory and applies these rules at its edge.
+#
+# Rule format: <source>   <destination>   <status>
+#   status 200 = rewrite (browser sees the source URL, content from destination)
+#   status 301/302 = redirect (browser follows to destination URL)
+#
+# ORDER MATTERS. First matching rule wins. The API rule must be above the
+# SPA fallback, or every /api/* call would get rewritten to index.html.
+
+
+# ---- API proxy -----------------------------------------------------------
+# Reverse-proxy /api/* to the backend web service. The browser only ever
+# sees pgpeer.onrender.com, which keeps everything same-origin and lets
+# our sameSite='lax' auth cookies flow without CORS gymnastics.
+#
+# UPDATE the destination if your backend service was named something other
+# than 'pgpeer-api' on Render.
+/api/*   https://pgpeer-api.onrender.com/api/:splat   200
+
+
+# ---- SPA fallback --------------------------------------------------------
+# Any path that isn't a real file in dist/ (and isn't /api/*, thanks to the
+# rule above) serves the React app. Lets React Router handle client-side
+# routing for /login, /pgs/:id, /search, etc.
+/*       /index.html                                  200
